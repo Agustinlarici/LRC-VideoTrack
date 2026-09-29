@@ -11,6 +11,7 @@ VIDEO → OpenCV → YOLO → ByteTrack → personas → zonas de mesas → moto
 ```
 restaurant-vision/
 ├── requirements.txt
+├── install.bat / start.bat  # instalación y arranque con doble clic (Windows)
 ├── README.md
 ├── backend/
 │   ├── main.py              # app FastAPI (uvicorn backend.main:app)
@@ -45,6 +46,8 @@ cd frontend
 npm install
 cd ..
 ```
+
+**Atajo con doble clic:** `install.bat` hace todo lo anterior (venv, pip, npm) y `start.bat` arranca backend y frontend y abre el navegador.
 
 La primera vez que se procesa un vídeo, Ultralytics descarga solo el modelo `yolov8n.pt` (~6 MB), así que hace falta internet ese día.
 
