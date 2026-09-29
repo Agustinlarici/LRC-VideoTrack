@@ -61,8 +61,23 @@ export default function Setup() {
           </div>
         )}
         <p className="muted small">
-          Cámara IP: <code>rtsp://usuario:clave@192.168.1.50:554/stream1</code> · Webcam USB: <code>0</code> (o <code>1</code>…)
+          Cámara IP: <code>rtsp://usuario:clave@192.168.1.50:554/stream1</code> · Webcam USB: <code>0</code>
         </p>
+        <details>
+          <summary className="muted">Usar el móvil como cámara</summary>
+          <ol className="small">
+            <li>Móvil y PC en la <b>misma red Wi-Fi</b> (no vale una red de invitados con aislamiento).</li>
+            <li>
+              Android: instala <b>IP Webcam</b>, pulsa “Iniciar servidor” y usa <code>http://IP-DEL-MOVIL:8080/video</code>.
+              <br />
+              Android/iPhone: <b>DroidCam</b> → <code>http://IP-DEL-MOVIL:4747/video</code>.
+              <br />
+              iPhone: <b>IP Camera Lite</b> → la URL que muestra la app (suele acabar en <code>:8081</code>).
+            </li>
+            <li>Pega la URL arriba, pulsa <b>Probar conexión</b> y luego <b>Usar esta fuente</b>. Dibuja las mesas sobre la imagen del móvil.</li>
+            <li>Apoya el móvil fijo (trípode) y en horizontal, y pon la resolución en 720p para que vaya fluido.</li>
+          </ol>
+        </details>
         {msg && <div className="banner error">{msg}</div>}
         <p className="muted">Fuente actual: {source || "ninguna"}</p>
       </section>

@@ -121,6 +121,11 @@ En *Configuración* → campo de fuente, y pulsa **Probar conexión** antes de *
 
 - **Cámara IP (RTSP):** `rtsp://usuario:clave@192.168.1.50:554/stream1`. La URL exacta depende de la marca (Hikvision, Dahua, Tapo, Reolink…); usa el flujo *secundario* (sub-stream) de 720p si la CPU va justa. Se fuerza RTSP sobre TCP.
 - **Webcam USB:** `0` (o `1`, `2`…).
+- **Móvil como cámara** (móvil y PC en la misma Wi-Fi, sin aislamiento de clientes):
+  - Android: app **IP Webcam** → “Iniciar servidor” → `http://IP-DEL-MOVIL:8080/video`.
+  - Android/iPhone: app **DroidCam** → `http://IP-DEL-MOVIL:4747/video`.
+  - iPhone: app **IP Camera Lite** → la URL que muestra la app.
+  - Pon el móvil fijo (trípode), en horizontal y a 720p. La IP la muestra la propia app. Estas apps no las he podido probar con un móvil real; el modo HTTP/MJPEG sí lo probé con una cámara simulada.
 - En directo el reloj es la hora real, no hay “hora de inicio”, se descartan frames si YOLO va lento (para no acumular retraso) y si la cámara se cae se **reconecta sola** (el dashboard muestra “RECONECTANDO CÁMARA…”).
 - Tras cambiar de vídeo a cámara, redibuja las mesas sobre su imagen.
 
