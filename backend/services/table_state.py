@@ -14,6 +14,10 @@ para que la hora de ocupación sea la real.
 from collections import deque
 from dataclasses import dataclass, field
 
+from . import alerts as alerts_mod
+from .alerts import Alert
+from .service_monitor import FoodMonitor, VisitDetector
+
 FREE = "LIBERA"
 OCCUPIED = "OCCUPATA"
 
@@ -32,12 +36,18 @@ class TableState:
     status: str = FREE
     people_count: int = 0
     occupied_since: float | None = None
+    free_since: float | None = None     # desde cuándo está libre (None hasta el primer frame)
+    first_visit_t: float | None = None  # primera visita de personal de esta ocupación
+    visit_count: int = 0
+    served_t: float | None = None       # cuándo se detectó comida/bebida servida
     _samples: deque = field(default_factory=deque)  # (t, count) dentro de la ventana
     _last_people: int = 0  # última cantidad > 0 vista mientras estaba ocupada
 
     def update(self, t: float, count: int) -> dict | None:
         """Procesa el conteo de un frame. Devuelve un evento si hubo transición."""
         self.people_count = count
+        if self.free_since is None and self.status == FREE:
+            self.free_since = t  # mesa libre desde que empezamos a verla
         if self.status == OCCUPIED and count > 0:
             self._last_people = count
 
@@ -55,6 +65,7 @@ class TableState:
         if self.status == FREE and ratio >= OCCUPY_MIN_RATIO:
             since, peak = present[0][0], max(c for _, c in present)
             self.status, self.occupied_since, self._last_people = OCCUPIED, since, peak
+            self.free_since, self.first_visit_t, self.visit_count, self.served_t = None, None, 0, None
             self._samples.clear()
             return {"type": EVENT_OCCUPIED, "table_id": self.table_id, "t": since, "people_count": peak}
 
@@ -70,9 +81,15 @@ class TableState:
                 "people_count": self._last_people, "duration": left - self.occupied_since,
             }
             self.status, self.occupied_since = FREE, None
+            self.free_since = left
             self._samples.clear()
             return event
         return None
+
+
+EVENT_VISIT = "TABLE_STAFF_VISIT"
+EVENT_SERVED = "TABLE_SERVED"
+EVENT_ALERT = "ALERT"
 
 
 @dataclass
@@ -83,34 +100,96 @@ class EventLog:
 
     def add(self, event: dict):
         self.events.append(event)
-        tid = event["table_id"]
-        if event["type"] == EVENT_OCCUPIED:
-            self._open[tid] = event["t"]
-        elif tid in self._open:
-            start = self._open.pop(tid)
-            self.sessions.append({"table_id": tid, "start": start, "end": event["t"], "duration": event["t"] - start})
 
 
 class TableEngine:
-    """Conjunto de mesas + log. Recibe posiciones de personas ya asignadas a mesas."""
+    """Conjunto de mesas + log. Recibe personas/objetos ya asignados a mesas.
 
-    def __init__(self, occupy_seconds: float, free_seconds: float):
+    `on_event(event)` se llama con cada evento nuevo (ocupada, libre, visita, servicio, aviso)."""
+
+    def __init__(self, occupy_seconds: float, free_seconds: float, get_settings=None, on_event=None):
         self.occupy_seconds, self.free_seconds = occupy_seconds, free_seconds
+        self.get_settings = get_settings or (lambda: {})
+        self.on_event = on_event
         self.tables: dict[str, TableState] = {}
+        self.visits: dict[str, VisitDetector] = {}
+        self.food: dict[str, FoodMonitor] = {}
         self.log = EventLog()
+        self.active_alerts: dict[str, Alert] = {}
+        self._fired: set[str] = set()
+        self.last_t = 0.0
 
     def sync_tables(self, table_ids: list[str]):
         for tid in table_ids:
-            self.tables.setdefault(tid, TableState(tid, self.occupy_seconds, self.free_seconds))
+            if tid not in self.tables:
+                self.tables[tid] = TableState(tid, self.occupy_seconds, self.free_seconds)
+                self.visits[tid], self.food[tid] = VisitDetector(), FoodMonitor()
         for tid in list(self.tables):
             if tid not in table_ids:
-                del self.tables[tid]
+                for d in (self.tables, self.visits, self.food):
+                    del d[tid]
 
-    def update(self, t: float, counts: dict[str, int]):
+    def _emit(self, event: dict):
+        self.log.add(event)
+        if self.on_event:
+            try:
+                self.on_event(event)
+            except Exception:  # noqa: BLE001 - un aviso fallido nunca debe parar el procesamiento
+                pass
+
+    def update(self, t: float, counts: dict[str, int], tracks: dict[str, list] = None,
+               items: dict[str, int] = None):
+        """`tracks`: {mesa: [(track_id, walked_in)]}.  `items`: {mesa: nº objetos} o None si en este
+        frame no se detectaron objetos."""
+        self.last_t = t
+        tracks = tracks or {}
         for tid, table in self.tables.items():
+            food, visits = self.food[tid], self.visits[tid]
+            if items is not None:
+                food.add_sample(t, items.get(tid, 0))
+
             event = table.update(t, counts.get(tid, 0))
             if event:
-                self.log.add(event)
+                self._emit(event)
+                if event["type"] == EVENT_OCCUPIED:
+                    food.begin_occupancy()
+                else:
+                    food.end_occupancy()
+                    self.log.sessions.append({
+                        "table_id": tid, "start": table.occupied_since if table.occupied_since is not None
+                        else event["t"] - event["duration"], "end": event["t"], "duration": event["duration"],
+                        "visits": table.visit_count,
+                        "service_delay": None if table.served_t is None else table.served_t - (event["t"] - event["duration"]),
+                    })
+
+            for visit in visits.update(t, tracks.get(tid, [])):
+                # sólo cuenta si la mesa estaba ocupada cuando llegó la persona
+                if table.occupied_since is not None and visit["t"] >= table.occupied_since:
+                    table.visit_count += 1
+                    if table.first_visit_t is None:
+                        table.first_visit_t = visit["t"]
+                    self._emit({"type": EVENT_VISIT, "table_id": tid, "t": visit["t"],
+                                "people_count": table.people_count, "duration": visit["duration"]})
+
+            if table.status == OCCUPIED and table.served_t is None:
+                served = food.served_at(t)
+                if served is not None and served >= (table.occupied_since or 0):
+                    table.served_t = served
+                    self._emit({"type": EVENT_SERVED, "table_id": tid, "t": served,
+                                "people_count": table.people_count,
+                                "after": served - table.occupied_since})
+
+        self._update_alerts(t)
+
+    def _update_alerts(self, t: float):
+        active = {a.key: a for a in alerts_mod.evaluate(self.tables, t, self.get_settings())}
+        self.active_alerts = active
+        for key, alert in active.items():
+            if key not in self._fired:
+                self._fired.add(key)
+                self._emit({"type": EVENT_ALERT, "alert": alert.type, "table_id": alert.table_id,
+                            "t": t, "people_count": self.tables[alert.table_id].people_count,
+                            "message": alert.message})
 
     def stats(self, now: float) -> dict:
         total = len(self.tables)
@@ -118,10 +197,16 @@ class TableEngine:
         durations = [s["duration"] for s in self.log.sessions]
         if not durations:  # sin ocupaciones cerradas: usar las que están en curso
             durations = [now - tb.occupied_since for tb in self.tables.values() if tb.occupied_since is not None]
+        delays = [s["service_delay"] for s in self.log.sessions if s["service_delay"] is not None]
+        delays += [tb.served_t - tb.occupied_since for tb in self.tables.values()
+                   if tb.occupied_since is not None and tb.served_t is not None]
         return {
             "total": total,
             "occupied": occupied,
             "free": total - occupied,
             "occupancy_pct": round(100 * occupied / total, 1) if total else 0.0,
             "avg_duration": sum(durations) / len(durations) if durations else 0.0,
+            "avg_service_delay": sum(delays) / len(delays) if delays else None,
+            "visits": sum(1 for e in self.log.events if e["type"] == EVENT_VISIT),
+            "active_alerts": len(self.active_alerts),
         }

@@ -25,11 +25,22 @@ export const api = {
     form.append("file", file);
     return request("/source/upload", { method: "POST", body: form });
   },
+  testSource: (source) => request("/source/test", json("POST", { source })),
+  getSettings: () => request("/settings"),
+  saveSettings: (settings) => request("/settings", json("PUT", settings)),
   getZones: () => request("/zones"),
   saveZones: (zones) => request("/zones", json("PUT", { zones })),
   start: (opts) => request("/pipeline/start", json("POST", opts)),
   stop: () => request("/pipeline/stop", { method: "POST" }),
 };
+
+const TYPE_LABEL = {
+  UNATTENDED: "Sin atender",
+  SERVICE_SLOW: "Sin servicio",
+  LONG_STAY: "Ocupación larga",
+  FREE_IDLE: "Libre sin ocupar",
+};
+export const alertLabel = (type) => TYPE_LABEL[type] || type;
 
 export function formatDuration(seconds) {
   const s = Math.floor(seconds || 0);

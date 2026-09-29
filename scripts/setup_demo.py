@@ -1,5 +1,5 @@
 """Prepara la demo: descarga un vídeo de restaurante (Mixkit, licencia gratuita),
-lo deja como fuente actual y crea 4 mesas de ejemplo.
+lo deja como fuente actual crea 4 mesas de ejemplo y aplica los umbrales cortos de demo.
 
     python scripts\\setup_demo.py
 """
@@ -28,4 +28,8 @@ if not DEST.exists():
     DEST.write_bytes(urllib.request.urlopen(req, timeout=60).read())
 config.SOURCE_FILE.write_text(json.dumps({"source": str(DEST)}), encoding="utf-8")
 config.ZONES_FILE.write_text(json.dumps({"zones": DEMO_ZONES}, indent=2), encoding="utf-8")
+
+from backend.services.settings import PRESETS, Settings  # noqa: E402
+
+Settings().update(PRESETS["demo"])  # umbrales cortos para que los avisos salten en un vídeo de 15 s
 print(f"Listo: {DEST}\nMesas: T01..T04. Arranca el backend y el frontend e inicia el procesamiento.")

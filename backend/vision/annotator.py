@@ -2,12 +2,13 @@
 import cv2
 import numpy as np
 
-from .detector import Person
+from .detector import Item, Person
 
 GREEN = (80, 200, 80)
 RED = (60, 60, 230)
 WHITE = (255, 255, 255)
 YELLOW = (0, 220, 255)
+ITEM = (255, 170, 60)
 
 
 def _label(img, text, org, color, scale=0.55):
@@ -17,7 +18,7 @@ def _label(img, text, org, color, scale=0.55):
     cv2.putText(img, text, (x + 3, y - 3), cv2.FONT_HERSHEY_SIMPLEX, scale, WHITE, 1, cv2.LINE_AA)
 
 
-def annotate(image: np.ndarray, people: list[Person], tables: list[dict]) -> np.ndarray:
+def annotate(image: np.ndarray, people: list[Person], items: list[Item], tables: list[dict]) -> np.ndarray:
     """`tables`: [{id, polygon(np.int32 Nx2), status, people_count}]"""
     out = image.copy()
 
@@ -32,6 +33,10 @@ def annotate(image: np.ndarray, people: list[Person], tables: list[dict]) -> np.
         cv2.polylines(out, [t["polygon"]], True, color, 2, cv2.LINE_AA)
         x, y = t["polygon"].min(axis=0)
         _label(out, f'{t["id"]} {t["status"]} ({t["people_count"]})', (x, max(y, 20)), color)
+
+    for it in items:
+        cv2.rectangle(out, (int(it.x1), int(it.y1)), (int(it.x2), int(it.y2)), ITEM, 1)
+        cv2.putText(out, it.name, (int(it.x1), max(int(it.y1) - 3, 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, ITEM, 1, cv2.LINE_AA)
 
     for p in people:
         cv2.rectangle(out, (int(p.x1), int(p.y1)), (int(p.x2), int(p.y2)), YELLOW, 2)

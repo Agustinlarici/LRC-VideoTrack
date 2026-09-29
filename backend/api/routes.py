@@ -12,13 +12,15 @@ from pydantic import BaseModel
 
 from .. import config
 from ..services.pipeline import Pipeline
+from ..services.settings import PRESETS, Settings
 from ..services.zones import ZoneStore
 from ..vision.video_source import grab_first_frame, is_live
 
 router = APIRouter(prefix="/api")
 
 zones = ZoneStore()
-pipeline = Pipeline(zones)
+settings = Settings()
+pipeline = Pipeline(zones, settings)
 
 
 def _get_source() -> str:
@@ -48,6 +50,19 @@ def set_source(body: SourceBody):
         raise HTTPException(400, f"No existe el archivo: {source}")
     _set_source(source)
     return {"source": source}
+
+
+@router.post("/source/test")
+def test_source(body: SourceBody):
+    """Comprueba que una cámara/URL abre y entrega frames (sin guardar nada)."""
+    source = body.source.strip().strip('"')
+    if not is_live(source) and not Path(source).is_file():
+        return {"ok": False, "error": f"No existe el archivo: {source}"}
+    image = grab_first_frame(source)
+    if image is None:
+        return {"ok": False, "error": "No se pudo leer ningún frame. Revisa la URL, usuario/contraseña y que la cámara sea accesible desde este PC."}
+    h, w = image.shape[:2]
+    return {"ok": True, "width": w, "height": h, "live": is_live(source)}
 
 
 @router.post("/source/upload")
@@ -95,9 +110,7 @@ def put_zones(body: ZonesBody):
 
 # ---------- procesamiento ----------
 class StartBody(BaseModel):
-    start_time: str | None = None  # hora "del vídeo" al empezar, ej. "20:00"
-    occupy_seconds: float = config.OCCUPY_SECONDS
-    free_seconds: float = config.FREE_SECONDS
+    start_time: str | None = None  # hora "del vídeo" al empezar, ej. "20:00" (vacío = ahora)
     realtime: bool = True
 
 
@@ -109,7 +122,7 @@ def start(body: StartBody):
     if not zones.get():
         raise HTTPException(400, "Define al menos una mesa antes de iniciar")
     try:
-        pipeline.start(source, body.start_time, body.occupy_seconds, body.free_seconds, body.realtime)
+        pipeline.start(source, body.start_time, body.realtime)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return {"ok": True}
@@ -119,6 +132,33 @@ def start(body: StartBody):
 def stop():
     pipeline.stop()
     return {"ok": True}
+
+
+class SettingsBody(BaseModel):
+    occupy_seconds: float | None = None
+    free_seconds: float | None = None
+    unattended_seconds: float | None = None
+    service_seconds: float | None = None
+    long_stay_seconds: float | None = None
+    free_idle_seconds: float | None = None
+    sound: bool | None = None
+    webhook_url: str | None = None
+    preset: str | None = None  # "real" | "demo"
+
+
+@router.get("/settings")
+def get_settings():
+    return settings.get()
+
+
+@router.put("/settings")
+def put_settings(body: SettingsBody):
+    changes = body.model_dump(exclude={"preset"})
+    if body.preset:
+        if body.preset not in PRESETS:
+            raise HTTPException(400, f"Preset desconocido: {body.preset}")
+        changes = {**PRESETS[body.preset], **{k: v for k, v in changes.items() if v is not None}}
+    return settings.update(changes)
 
 
 @router.get("/state")
