@@ -25,6 +25,7 @@ restaurant-vision/
 │   │   └── pipeline.py      #   hilo que une todo
 │   ├── api/routes.py        # endpoints REST + stream MJPEG
 │   └── data/                # zones.json, source.json y vídeos subidos (local, ignorado por git)
+├── scripts/setup_demo.py    # descarga el vídeo de demo y crea mesas de ejemplo
 ├── frontend/                # React + Vite, CSS simple
 │   └── src/components/      # Dashboard, Setup, ZoneEditor
 └── tests/test_table_state.py
@@ -65,6 +66,13 @@ npm run dev
 
 Abre http://localhost:5173
 
+## Demo rápida (vídeo de prueba + mesas ya definidas)
+Con el venv activo, en la carpeta del proyecto:
+```bat
+python scripts\setup_demo.py
+```
+Descarga un vídeo de restaurante de Mixkit (licencia gratuita, ~5 MB, 15 s, cámara elevada fija en la que se van llenando las mesas), lo deja como fuente y crea las mesas T01–T04. Después arranca backend y frontend, ve a *Dashboard* → **Iniciar procesamiento**. **Reinicia el backend** si ya estaba corriendo al ejecutar el script.
+
 ## Uso
 
 1. **Cargar un vídeo**: pestaña *Configuración* → “Elegir archivo” (se copia a `backend/data/videos/`) o pega la ruta de un MP4 (`C:\videos\restaurant.mp4`) y pulsa “Usar esta fuente”.
@@ -81,8 +89,10 @@ Abre http://localhost:5173
 
 ## Reglas de negocio
 - Una persona pertenece a una mesa si el **centro de su bounding box** está dentro del polígono.
-- `LIBERA → OCCUPATA`: hay ≥1 persona durante **5 s** seguidos (`RV_OCCUPY_SECONDS`).
-- `OCCUPATA → LIBERA`: 0 personas durante **10 s** seguidos (`RV_FREE_SECONDS`).
+- El debounce usa una **ventana deslizante**, así un frame en que YOLO pierde a la persona no reinicia la cuenta:
+  - `LIBERA → OCCUPATA`: en los últimos **2 s** (`RV_OCCUPY_SECONDS`) hubo gente en ≥80% de los frames.
+  - `OCCUPATA → LIBERA`: en los últimos **3 s** (`RV_FREE_SECONDS`) hubo gente en ≤10% de los frames.
+  - Estos valores están pensados para el vídeo de demo de 15 s. **Para un restaurante real sube los valores** (p. ej. `set RV_OCCUPY_SECONDS=30` y `set RV_FREE_SECONDS=120`).
 - Eventos `TABLE_OCCUPIED` / `TABLE_FREED` con `table_id`, hora y `people_count`. La hora es la del momento en que *empezó* el cambio (no la de la confirmación). `TABLE_FREED` incluye la duración.
 - Todos los tiempos usan el **reloj del vídeo** (frame/fps) sumado a la hora de inicio; no dependen de lo rápido que procese el PC.
 - “Tiempo medio” = media de ocupaciones ya cerradas (si aún no hay ninguna, de las que están en curso).
@@ -95,7 +105,8 @@ Todo entra por `backend/vision/video_source.py`. En *Configuración* puedes pega
 |---|---|---|
 | `RV_YOLO_MODEL` | `yolov8n.pt` | Modelo YOLO (`yolov8s.pt` = más preciso, más lento) |
 | `RV_YOLO_CONF` | `0.35` | Umbral de confianza |
-| `RV_OCCUPY_SECONDS` / `RV_FREE_SECONDS` | `5` / `10` | Debounce |
+| `RV_OCCUPY_SECONDS` / `RV_FREE_SECONDS` | `2` / `3` | Debounce (segundos de vídeo) |
+| `RV_PROCESS_FPS` | `10` | Frames por segundo que pasan por YOLO; el resto se salta (el reloj sigue siendo exacto). Bájalo si tu PC va lento |
 | `RV_YOLO_IMGSZ` | `640` | Tamaño de inferencia |
 
 En CMD: `set RV_YOLO_MODEL=yolov8s.pt`. En PowerShell: `$env:RV_YOLO_MODEL="yolov8s.pt"`.

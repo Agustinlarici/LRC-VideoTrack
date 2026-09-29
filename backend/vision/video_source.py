@@ -18,7 +18,7 @@ class Frame:
 
 
 class VideoSource:
-    def __init__(self, source: str):
+    def __init__(self, source: str, process_fps: float = 0):
         self.source = source
         self.live = is_live(source)
         self.cap = cv2.VideoCapture(source)
@@ -29,6 +29,8 @@ class VideoSource:
         self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT)) if not self.live else 0
+        # Sólo se procesa 1 de cada `stride` frames; los demás se saltan con grab() (barato)
+        self.stride = max(1, round(self.fps / process_fps)) if process_fps else 1
         self._index = 0
         self._t0 = time.time()
 
@@ -38,7 +40,10 @@ class VideoSource:
             return None
         t = (time.time() - self._t0) if self.live else self._index / self.fps
         frame = Frame(image=image, t=t, index=self._index)
-        self._index += 1
+        for _ in range(self.stride - 1):
+            if not self.cap.grab():
+                break
+        self._index += self.stride
         return frame
 
     def close(self):

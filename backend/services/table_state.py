@@ -2,12 +2,16 @@
 
 Trabaja en segundos de vídeo (`t`), sin saber nada de YOLO ni de OpenCV.
 
-    LIBERA   --(hay gente >= occupy_seconds seguidos)--> OCCUPATA   (TABLE_OCCUPIED)
-    OCCUPATA --(sin gente >= free_seconds seguidos)----> LIBERA     (TABLE_FREED)
+El debounce usa una ventana deslizante en vez de "N segundos seguidos", porque YOLO parpadea
+(un frame sin detección no debe reiniciar la cuenta):
+
+    LIBERA   --(en los últimos occupy_seconds hubo gente en >= 80% de los frames)--> OCCUPATA
+    OCCUPATA --(en los últimos free_seconds hubo gente en <= 10% de los frames)---> LIBERA
 
 El timestamp del evento es el instante en que empezó el cambio (no el de la confirmación),
 para que la hora de ocupación sea la real.
 """
+from collections import deque
 from dataclasses import dataclass, field
 
 FREE = "LIBERA"
@@ -15,6 +19,9 @@ OCCUPIED = "OCCUPATA"
 
 EVENT_OCCUPIED = "TABLE_OCCUPIED"
 EVENT_FREED = "TABLE_FREED"
+
+OCCUPY_MIN_RATIO = 0.8   # fracción mínima de frames con gente para ocupar
+FREE_MAX_RATIO = 0.1     # fracción máxima de frames con gente para liberar
 
 
 @dataclass
@@ -25,43 +32,46 @@ class TableState:
     status: str = FREE
     people_count: int = 0
     occupied_since: float | None = None
-    _candidate_since: float | None = None
-    _candidate_peak: int = 0
+    _samples: deque = field(default_factory=deque)  # (t, count) dentro de la ventana
     _last_people: int = 0  # última cantidad > 0 vista mientras estaba ocupada
 
     def update(self, t: float, count: int) -> dict | None:
         """Procesa el conteo de un frame. Devuelve un evento si hubo transición."""
         self.people_count = count
-
-        if self.status == FREE:
-            if count > 0:
-                if self._candidate_since is None:
-                    self._candidate_since, self._candidate_peak = t, 0
-                self._candidate_peak = max(self._candidate_peak, count)
-                if t - self._candidate_since >= self.occupy_seconds:
-                    since, peak = self._candidate_since, self._candidate_peak
-                    self.status, self.occupied_since = OCCUPIED, since
-                    self._candidate_since, self._last_people = None, peak
-                    return {"type": EVENT_OCCUPIED, "table_id": self.table_id, "t": since, "people_count": peak}
-            else:
-                self._candidate_since = None
-            return None
-
-        # OCCUPATA
-        if count > 0:
-            self._candidate_since = None
+        if self.status == OCCUPIED and count > 0:
             self._last_people = count
-        else:
-            if self._candidate_since is None:
-                self._candidate_since = t
-            if t - self._candidate_since >= self.free_seconds:
-                since = self._candidate_since
-                event = {
-                    "type": EVENT_FREED, "table_id": self.table_id, "t": since,
-                    "people_count": self._last_people, "duration": since - self.occupied_since,
-                }
-                self.status, self.occupied_since, self._candidate_since = FREE, None, None
-                return event
+
+        window = self.occupy_seconds if self.status == FREE else self.free_seconds
+        self._samples.append((t, count))
+        # Descarta lo viejo, pero conserva una muestra en/antes del borde para medir bien el span
+        while len(self._samples) > 1 and self._samples[1][0] <= t - window:
+            self._samples.popleft()
+        if t - self._samples[0][0] < window:
+            return None  # todavía no hay historia suficiente
+
+        present = [(ts, c) for ts, c in self._samples if c > 0]
+        ratio = len(present) / len(self._samples)
+
+        if self.status == FREE and ratio >= OCCUPY_MIN_RATIO:
+            since, peak = present[0][0], max(c for _, c in present)
+            self.status, self.occupied_since, self._last_people = OCCUPIED, since, peak
+            self._samples.clear()
+            return {"type": EVENT_OCCUPIED, "table_id": self.table_id, "t": since, "people_count": peak}
+
+        if self.status == OCCUPIED and ratio <= FREE_MAX_RATIO:
+            # Momento en que dejó de haber gente: la muestra siguiente a la última con gente
+            left = self._samples[0][0]
+            if present:
+                last = present[-1][0]
+                left = next(ts for ts, _ in self._samples if ts > last) if last < t else t
+            left = max(left, self.occupied_since)
+            event = {
+                "type": EVENT_FREED, "table_id": self.table_id, "t": left,
+                "people_count": self._last_people, "duration": left - self.occupied_since,
+            }
+            self.status, self.occupied_since = FREE, None
+            self._samples.clear()
+            return event
         return None
 
 

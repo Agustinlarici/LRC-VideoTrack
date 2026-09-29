@@ -16,11 +16,12 @@ YOLO_MODEL = os.getenv("RV_YOLO_MODEL", "yolov8n.pt")  # se descarga solo la pri
 YOLO_CONF = float(os.getenv("RV_YOLO_CONF", "0.35"))
 YOLO_IMGSZ = int(os.getenv("RV_YOLO_IMGSZ", "640"))
 TRACKER = os.getenv("RV_TRACKER", "bytetrack.yaml")  # tracker incluido en ultralytics
+PROCESS_FPS = float(os.getenv("RV_PROCESS_FPS", "10"))  # frames/s que pasan por YOLO (el resto se salta)
 PERSON_CLASS_ID = 0  # COCO: 0 = person
 
 # --- Lógica de mesas (segundos de VÍDEO, no de reloj real) ---
-OCCUPY_SECONDS = float(os.getenv("RV_OCCUPY_SECONDS", "5"))  # LIBERA -> OCCUPATA
-FREE_SECONDS = float(os.getenv("RV_FREE_SECONDS", "10"))     # OCCUPATA -> LIBERA
+OCCUPY_SECONDS = float(os.getenv("RV_OCCUPY_SECONDS", "2"))  # LIBERA -> OCCUPATA
+FREE_SECONDS = float(os.getenv("RV_FREE_SECONDS", "3"))     # OCCUPATA -> LIBERA
 
 # --- Stream hacia el dashboard ---
 STREAM_MAX_WIDTH = int(os.getenv("RV_STREAM_MAX_WIDTH", "960"))

@@ -79,7 +79,7 @@ class Pipeline:
             if self._tracker is None:
                 self._tracker = PersonTracker()
             self._tracker.reset()
-            source = VideoSource(self.source)
+            source = VideoSource(self.source, config.PROCESS_FPS)
             self.status = "running"
 
             wall_start = time.time()

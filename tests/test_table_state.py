@@ -44,6 +44,13 @@ def test_short_gap_while_occupied_does_not_free():
     assert e.tables["T01"].status == OCCUPIED and len(e.log.events) == 1
 
 
+def test_detection_flicker_does_not_break_occupancy():
+    e = make()
+    # YOLO pierde a la persona 1 de cada 6 frames (10 fps)
+    run(e, [(i / 10, {"T01": 0 if i % 6 == 5 else 1}) for i in range(0, 200)])
+    assert e.tables["T01"].status == OCCUPIED and len(e.log.events) == 1
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
