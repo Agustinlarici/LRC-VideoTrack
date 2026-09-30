@@ -116,6 +116,11 @@ Botones de preset: **Restaurante real** y **Demo (vídeo corto)**, que baja todo
 
 Limitaciones a tener en cuenta: no distingue camarero de cliente (una persona que atraviesa la zona de una mesa ≥3 s puede contar como visita); desde una cámara elevada los objetos pequeños se pierden y pueden dar falsos servicios o no detectarlos; con mesas adyacentes, los comensales en el borde pueden contarse en la mesa vecina. Para precisión comercial haría falta afinar/entrenar un modelo con imágenes de la sala.
 
+## Informe y rendimiento
+- **Ocupación en el tiempo:** gráfico de mesas ocupadas a lo largo de la sesión.
+- **Exportar:** *Descargar eventos (CSV)* y *Descargar ocupaciones (CSV)* (una fila por ocupación: hora, duración, visitas, tiempo hasta servicio). Se abren directamente en Excel en español (separador `;`). Son datos de la sesión actual; se pierden al reiniciar el backend, así que descárgalos antes de cerrar.
+- **fps:** el dashboard muestra los frames por segundo que analiza el PC. Si aparece “PC lento”, baja `RV_PROCESS_FPS` (p. ej. 6), usa `RV_ITEM_IMGSZ=960` o una GPU NVIDIA. La primera vez que se pulsa *Iniciar* tarda 20–30 s en cargar PyTorch y el modelo.
+
 ## Conectar una cámara
 En *Configuración* → campo de fuente, y pulsa **Probar conexión** antes de **Usar esta fuente**:
 

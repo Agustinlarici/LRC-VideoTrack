@@ -2,6 +2,8 @@
 
 Corre en un hilo. El API sólo lee `snapshot()` y `latest_jpeg`.
 """
+import csv
+import io
 import json
 import threading
 import time
@@ -55,6 +57,8 @@ class Pipeline:
         self._items = None
         self.live = False
         self.connected = True
+        self.proc_fps = 0.0
+        self._last_pub = 0.0
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._lock = threading.RLock()
@@ -86,6 +90,7 @@ class Pipeline:
             cfg = self.settings.get()
             self.engine = TableEngine(cfg["occupy_seconds"], cfg["free_seconds"], self.settings.get, self._notify)
             self.live, self.connected = False, True
+            self.proc_fps, self._last_pub = 0.0, 0.0
             self._stop = threading.Event()  # un evento por ejecución: un hilo viejo nunca afecta al nuevo
             self._thread = threading.Thread(
                 target=self._run, args=(run_id, self._stop, self.engine, source, realtime), daemon=True)
@@ -205,6 +210,11 @@ class Pipeline:
         ok, buf = cv2.imencode(".jpg", view, [cv2.IMWRITE_JPEG_QUALITY, config.STREAM_JPEG_QUALITY])
         if not ok:
             return
+        now = time.time()
+        if self._last_pub:
+            inst = 1.0 / max(now - self._last_pub, 1e-3)
+            self.proc_fps = inst if not self.proc_fps else 0.9 * self.proc_fps + 0.1 * inst
+        self._last_pub = now
         self.video_t = frame.t
         self.people_tracks = n_people
         self.progress = frame.index / source.total_frames if source.total_frames else 0.0
@@ -247,9 +257,46 @@ class Pipeline:
         return {
             "status": self.status, "error": self.error, "run_id": self.run_id, "source": self.source,
             "live": self.live, "connected": self.connected,
+            "fps": round(self.proc_fps, 1), "target_fps": config.PROCESS_FPS,
+            "history": self._history(),
             "clock": self._clock(t), "video_seconds": t, "progress": self.progress,
             "people_visible": self.people_tracks,
             "tables": tables, "stats": engine.stats(t), "events": events[::-1],
             "alerts": [{"key": k, "type": a.type, "table_id": a.table_id, "message": a.message}
                        for k, a in engine.active_alerts.items()],
         }
+
+    # ---------- historial y exportación ----------
+    def _history(self, max_points: int = 300) -> list[dict]:
+        hist = list(self.engine.history)
+        step = max(1, len(hist) // max_points)
+        return [{"time": self._clock(t), "occupied": occ, "total": tot} for t, occ, tot in hist[::step]]
+
+    def export_events_csv(self) -> str:
+        labels = {"TABLE_OCCUPIED": "Mesa ocupada", "TABLE_FREED": "Mesa libre",
+                  "TABLE_STAFF_VISIT": "Visita de personal (estimada)", "TABLE_SERVED": "Comida/bebida servida (estimado)",
+                  "ALERT": "Aviso"}
+        out = io.StringIO()
+        w = csv.writer(out, delimiter=";")
+        w.writerow(["hora", "mesa", "evento", "personas", "duracion_s", "detalle"])
+        for e in self.engine.log.events:
+            detail = e.get("message") or ""
+            if e["type"] == "TABLE_SERVED":
+                detail = f'{e["after"]:.0f} s tras sentarse'
+            dur = e.get("duration")
+            w.writerow([self._clock(e["t"]), e["table_id"], labels.get(e["type"], e["type"]), e["people_count"],
+                        "" if dur is None else f"{dur:.0f}", detail])
+        return out.getvalue()
+
+    def export_sessions_csv(self) -> str:
+        out = io.StringIO()
+        w = csv.writer(out, delimiter=";")
+        w.writerow(["mesa", "ocupada", "libre", "duracion_s", "visitas_personal", "servicio_tras_s", "estado"])
+        for s_ in self.engine.log.sessions:
+            w.writerow([s_["table_id"], self._clock(s_["start"]), self._clock(s_["end"]), f'{s_["duration"]:.0f}',
+                        s_["visits"], "" if s_["service_delay"] is None else f'{s_["service_delay"]:.0f}', "cerrada"])
+        for tid, tb in sorted(self.engine.tables.items()):
+            if tb.occupied_since is not None:
+                w.writerow([tid, self._clock(tb.occupied_since), "", f"{self.video_t - tb.occupied_since:.0f}",
+                            tb.visit_count, "" if tb.served_t is None else f"{tb.served_t - tb.occupied_since:.0f}", "en curso"])
+        return out.getvalue()

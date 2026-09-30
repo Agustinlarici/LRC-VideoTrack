@@ -161,6 +161,22 @@ def put_settings(body: SettingsBody):
     return settings.update(changes)
 
 
+def _csv_response(text: str, name: str) -> Response:
+    # BOM + ';' para que Excel en español lo abra con columnas y tildes correctas
+    return Response(("\ufeff" + text).encode("utf-8"), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/export/events.csv")
+def export_events():
+    return _csv_response(pipeline.export_events_csv(), "eventos.csv")
+
+
+@router.get("/export/sessions.csv")
+def export_sessions():
+    return _csv_response(pipeline.export_sessions_csv(), "ocupaciones.csv")
+
+
 @router.get("/state")
 def state():
     return pipeline.snapshot()

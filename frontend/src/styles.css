@@ -71,3 +71,13 @@ input { font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-
 .settings-grid input[type=number] { width: 100%; }
 label.inline { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 @media (max-width: 900px) { .settings-grid { grid-template-columns: 1fr; } }
+.chart { width: 100%; height: auto; display: block; }
+.chart .grid-line { stroke: var(--line); stroke-width: 1; }
+.chart .axis { fill: var(--muted); font-size: 11px; }
+.chart .line { fill: none; stroke: var(--blue); stroke-width: 2; }
+.chart .area { fill: var(--blue); opacity: 0.12; }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.export { display: flex; gap: 14px; font-size: 13px; }
+.export a { color: var(--blue); text-decoration: none; }
+.export a:hover { text-decoration: underline; }
+.pill.warn { background: #fff1e0; color: #b35f00; }

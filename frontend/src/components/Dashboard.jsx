@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, formatDuration, alertLabel } from "../api.js";
+import OccupancyChart from "./OccupancyChart.jsx";
 import SettingsPanel from "./SettingsPanel.jsx";
 
 function beep() {
@@ -121,6 +122,12 @@ export default function Dashboard({ state, goSetup }) {
         )}
         <span className={`pill ${state.status}`}>{isLive && state.status === "running" ? "EN DIRECTO" : state.status}</span>
         {isLive && state.status === "running" && !state.connected && <span className="pill error">RECONECTANDO CÁMARA…</span>}
+        {state.status === "running" && state.fps > 0 && (
+          <span className={`pill ${!isLive && state.fps < state.target_fps * 0.7 ? "warn" : ""}`}
+                title="Frames por segundo que analiza el PC">
+            {state.fps} fps{!isLive && state.fps < state.target_fps * 0.7 ? " · PC lento" : ""}
+          </span>
+        )}
         <span className="muted">
           {isLive ? "Hora" : "Reloj del vídeo"}: <b>{state.clock}</b>
           {state.progress > 0 && ` · ${Math.round(state.progress * 100)}%`} · personas visibles: {state.people_visible}
@@ -173,7 +180,18 @@ export default function Dashboard({ state, goSetup }) {
       </div>
 
       <section className="card">
-        <h2>Eventos y avisos</h2>
+        <h2>Ocupación en el tiempo</h2>
+        <OccupancyChart history={state.history} />
+      </section>
+
+      <section className="card">
+        <div className="card-head">
+          <h2>Eventos y avisos</h2>
+          <span className="export">
+            <a href="/api/export/events.csv" download>Descargar eventos (CSV)</a>
+            <a href="/api/export/sessions.csv" download>Descargar ocupaciones (CSV)</a>
+          </span>
+        </div>
         {state.events.length === 0 && <p className="muted">Sin eventos todavía.</p>}
         <ul className="events">
           {state.events.map((e, i) => (

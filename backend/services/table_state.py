@@ -118,6 +118,7 @@ class TableEngine:
         self.active_alerts: dict[str, Alert] = {}
         self._fired: set[str] = set()
         self.last_t = 0.0
+        self.history: list[tuple[float, int, int]] = []  # (t, ocupadas, total), 1 punto cada ~2 s
 
     def sync_tables(self, table_ids: list[str]):
         for tid in table_ids:
@@ -179,6 +180,10 @@ class TableEngine:
                                 "people_count": table.people_count,
                                 "after": served - table.occupied_since})
 
+        if not self.history or t - self.history[-1][0] >= 2.0:
+            self.history.append((t, sum(1 for tb in self.tables.values() if tb.status == OCCUPIED), len(self.tables)))
+            if len(self.history) > 20000:
+                del self.history[::2]  # decimar: nunca crece sin límite
         self._update_alerts(t)
 
     def _update_alerts(self, t: float):
