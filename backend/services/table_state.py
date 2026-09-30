@@ -14,9 +14,10 @@ para que la hora de ocupación sea la real.
 from collections import deque
 from dataclasses import dataclass, field
 
+from .. import config
 from . import alerts as alerts_mod
 from .alerts import Alert
-from .service_monitor import FoodMonitor, VisitDetector
+from .service_monitor import FoodMonitor, ItemsTracker, PartyTracker, VisitDetector
 
 FREE = "LIBERA"
 OCCUPIED = "OCCUPATA"
@@ -40,6 +41,9 @@ class TableState:
     first_visit_t: float | None = None  # primera visita de personal de esta ocupación
     visit_count: int = 0
     served_t: float | None = None       # cuándo se detectó comida/bebida servida
+    cleared_t: float | None = None      # cuándo se detectó la mesa recogida
+    cleaned: bool = False               # ya se detectó limpieza/preparación tras quedar libre
+    has_been_occupied: bool = False
     _samples: deque = field(default_factory=deque)  # (t, count) dentro de la ventana
     _last_people: int = 0  # última cantidad > 0 vista mientras estaba ocupada
 
@@ -52,6 +56,9 @@ class TableState:
             self._last_people = count
 
         window = self.occupy_seconds if self.status == FREE else self.free_seconds
+        if (self.status == FREE and self.has_been_occupied and self.free_since is not None
+                and t - self.free_since < config.CLEAN_WINDOW_SECONDS):
+            window *= config.CLEAN_FACTOR  # recién liberada: probablemente la están limpiando, no es un cliente
         self._samples.append((t, count))
         # Descarta lo viejo, pero conserva una muestra en/antes del borde para medir bien el span
         while len(self._samples) > 1 and self._samples[1][0] <= t - window:
@@ -66,6 +73,7 @@ class TableState:
             since, peak = present[0][0], max(c for _, c in present)
             self.status, self.occupied_since, self._last_people = OCCUPIED, since, peak
             self.free_since, self.first_visit_t, self.visit_count, self.served_t = None, None, 0, None
+            self.cleared_t, self.cleaned, self.has_been_occupied = None, False, True
             self._samples.clear()
             return {"type": EVENT_OCCUPIED, "table_id": self.table_id, "t": since, "people_count": peak}
 
@@ -90,6 +98,10 @@ class TableState:
 EVENT_VISIT = "TABLE_STAFF_VISIT"
 EVENT_SERVED = "TABLE_SERVED"
 EVENT_ALERT = "ALERT"
+EVENT_PARTY = "PARTY_SIZE_CHANGED"
+EVENT_ITEMS = "ITEMS_CHANGED"
+EVENT_CLEARED = "TABLE_CLEARED"
+EVENT_CLEANED = "TABLE_CLEANED"
 
 
 @dataclass
@@ -114,6 +126,8 @@ class TableEngine:
         self.tables: dict[str, TableState] = {}
         self.visits: dict[str, VisitDetector] = {}
         self.food: dict[str, FoodMonitor] = {}
+        self.party: dict[str, PartyTracker] = {}
+        self.items: dict[str, ItemsTracker] = {}
         self.log = EventLog()
         self.active_alerts: dict[str, Alert] = {}
         self._fired: set[str] = set()
@@ -125,9 +139,10 @@ class TableEngine:
             if tid not in self.tables:
                 self.tables[tid] = TableState(tid, self.occupy_seconds, self.free_seconds)
                 self.visits[tid], self.food[tid] = VisitDetector(), FoodMonitor()
+                self.party[tid], self.items[tid] = PartyTracker(), ItemsTracker()
         for tid in list(self.tables):
             if tid not in table_ids:
-                for d in (self.tables, self.visits, self.food):
+                for d in (self.tables, self.visits, self.food, self.party, self.items):
                     del d[tid]
 
     def _emit(self, event: dict):
@@ -139,23 +154,29 @@ class TableEngine:
                 pass
 
     def update(self, t: float, counts: dict[str, int], tracks: dict[str, list] = None,
-               items: dict[str, int] = None):
-        """`tracks`: {mesa: [(track_id, walked_in)]}.  `items`: {mesa: nº objetos} o None si en este
-        frame no se detectaron objetos."""
+               items: dict[str, list[str]] = None):
+        """`tracks`: {mesa: [(track_id, walked_in)]}.  `items`: {mesa: [nombres de objetos]} o None si
+        en este frame no se detectaron objetos."""
         self.last_t = t
         tracks = tracks or {}
         for tid, table in self.tables.items():
             food, visits = self.food[tid], self.visits[tid]
             if items is not None:
-                food.add_sample(t, items.get(tid, 0))
+                names = items.get(tid, [])
+                food.add_sample(t, len(names))
+                change = self.items[tid].update(names)
+                if change and table.status == OCCUPIED:
+                    self._emit({"type": EVENT_ITEMS, "table_id": tid, "t": t, "people_count": table.people_count, **change})
 
             event = table.update(t, counts.get(tid, 0))
             if event:
                 self._emit(event)
                 if event["type"] == EVENT_OCCUPIED:
                     food.begin_occupancy()
+                    self.party[tid].begin(event["people_count"])
                 else:
                     food.end_occupancy()
+                    self.party[tid].reset()
                     self.log.sessions.append({
                         "table_id": tid, "start": table.occupied_since if table.occupied_since is not None
                         else event["t"] - event["duration"], "end": event["t"], "duration": event["duration"],
@@ -163,7 +184,18 @@ class TableEngine:
                         "service_delay": None if table.served_t is None else table.served_t - (event["t"] - event["duration"]),
                     })
 
+            if table.status == OCCUPIED:
+                change = self.party[tid].update(t, visits.residents(t))
+                if change:
+                    self._emit({"type": EVENT_PARTY, "table_id": tid, "t": t, **change})
+
             for visit in visits.update(t, tracks.get(tid, [])):
+                if table.status == FREE and table.has_been_occupied and not table.cleaned:
+                    # personal en una mesa vacía tras haberse ido los clientes: la están limpiando/preparando
+                    table.cleaned = True
+                    self._emit({"type": EVENT_CLEANED, "table_id": tid, "t": visit["t"],
+                                "people_count": 0, "duration": visit["duration"]})
+                    continue
                 # sólo cuenta si la mesa estaba ocupada cuando llegó la persona
                 if table.occupied_since is not None and visit["t"] >= table.occupied_since:
                     table.visit_count += 1
@@ -179,6 +211,12 @@ class TableEngine:
                     self._emit({"type": EVENT_SERVED, "table_id": tid, "t": served,
                                 "people_count": table.people_count,
                                 "after": served - table.occupied_since})
+            elif table.status == OCCUPIED and table.served_t is not None and table.cleared_t is None:
+                cleared = food.cleared_at(t)
+                if cleared is not None and cleared > table.served_t + 3 * config.SERVICE_CONFIRM_SECONDS:
+                    table.cleared_t = cleared
+                    self._emit({"type": EVENT_CLEARED, "table_id": tid, "t": cleared,
+                                "people_count": table.people_count, "after": cleared - table.occupied_since})
 
         if not self.history or t - self.history[-1][0] >= 2.0:
             self.history.append((t, sum(1 for tb in self.tables.values() if tb.status == OCCUPIED), len(self.tables)))

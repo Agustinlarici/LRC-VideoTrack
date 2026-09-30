@@ -17,6 +17,7 @@ from ..vision.annotator import annotate
 from ..vision.detector import ItemDetector, PersonTracker
 from ..vision.video_source import NO_FRAME, VideoSource
 from .settings import Settings
+from .storage import Storage
 from .table_state import TableEngine
 from .zones import ZoneStore, bounding_rect, expand_rect, point_in_polygon, to_pixels, union_rect
 
@@ -49,9 +50,11 @@ def send_webhook(url: str, event: dict):
 
 class Pipeline:
     def __init__(self, zones: ZoneStore, settings: Settings = None, tracker_factory=PersonTracker,
-                 item_factory=ItemDetector):
+                 item_factory=ItemDetector, storage: Storage = None):
         self.zones = zones
         self.settings = settings or Settings()
+        self.storage = storage or Storage()
+        self.db_run: int | None = None  # id de la ejecución actual en la base de datos
         self._tracker_factory, self._item_factory = tracker_factory, item_factory
         self._tracker = None  # se crean al primer uso (cargan el modelo)
         self._items = None
@@ -88,12 +91,14 @@ class Pipeline:
             self.video_t, self.progress, self.people_tracks = 0.0, 0.0, 0
             self.latest_jpeg, self.frame_id = None, 0
             cfg = self.settings.get()
-            self.engine = TableEngine(cfg["occupy_seconds"], cfg["free_seconds"], self.settings.get, self._notify)
+            db_run = self.db_run = self.storage.new_run(source, clock_start, cfg)
+            self.engine = TableEngine(cfg["occupy_seconds"], cfg["free_seconds"], self.settings.get,
+                                      lambda e, rid=db_run, t0=clock_start: self._notify(rid, t0, e))
             self.live, self.connected = False, True
             self.proc_fps, self._last_pub = 0.0, 0.0
             self._stop = threading.Event()  # un evento por ejecución: un hilo viejo nunca afecta al nuevo
             self._thread = threading.Thread(
-                target=self._run, args=(run_id, self._stop, self.engine, source, realtime), daemon=True)
+                target=self._run, args=(run_id, self._stop, self.engine, source, realtime, db_run, clock_start), daemon=True)
             self._thread.start()
 
     def stop(self):
@@ -106,10 +111,18 @@ class Pipeline:
             if self.status in ("running", "loading"):
                 self.status = "idle"
 
-    def _notify(self, event: dict):
+    def _notify(self, db_run: int, clock_start: datetime, event: dict):
+        """Cada evento se guarda en la base de datos y, si hay webhook, se envía fuera."""
+        ts = clock_start + timedelta(seconds=event["t"])
+        payload = {k: v for k, v in event.items() if k not in ("type", "table_id", "t", "people_count")}
+        try:
+            self.storage.add_event(db_run, event["table_id"], event["type"], event["t"], ts,
+                                   event.get("people_count", 0), payload)
+        except Exception:  # noqa: BLE001 - un fallo de disco no debe parar el análisis
+            pass
         url = self.settings.get().get("webhook_url")
         if url:
-            send_webhook(url, {**event, "time": self._clock(event["t"]), "source": self.source})
+            send_webhook(url, {**event, "time": ts.strftime("%H:%M:%S"), "source": self.source})
 
     def _current(self, run_id: int) -> bool:
         return self.run_id == run_id
@@ -120,7 +133,8 @@ class Pipeline:
                 self.status, self.error = status, error
 
     # ---------- hilo principal ----------
-    def _run(self, run_id: int, stop: threading.Event, engine: TableEngine, source_name: str, realtime: bool):
+    def _run(self, run_id: int, stop: threading.Event, engine: TableEngine, source_name: str, realtime: bool,
+             db_run: int = None, clock_start: datetime = None):
         source = None
         try:
             with self._tracker_lock:
@@ -139,6 +153,7 @@ class Pipeline:
             zone_version, polygons = -1, {}
             origins: dict[int, tuple[float, float]] = {}  # dónde se vio por primera vez cada persona
             last_item_t, items, item_gap = -1e9, [], config.ITEM_INTERVAL
+            next_sample_t = 0.0
             person_roi, table_rects = None, {}
 
             while not stop.is_set():
@@ -182,12 +197,12 @@ class Pipeline:
                     found = self._items.detect(frame.image, table_rects)
                     # cada mesa sólo se queda con los objetos cuyo centro cae DENTRO de su polígono
                     # (así un objeto en el solape de dos recortes no se cuenta dos veces)
-                    items, items_per_table = [], {tid: 0 for tid in polygons}
+                    items, items_per_table = [], {tid: [] for tid in polygons}
                     for tid, its in found.items():
                         for it in its:
                             if tid in polygons and point_in_polygon(it.center, polygons[tid]):
                                 items.append(it)
-                                items_per_table[tid] += 1
+                                items_per_table[tid].append(it.name)
                     # si el PC va justo, espacia las detecciones para no gastar más de ~25% de CPU en objetos
                     item_gap = max(config.ITEM_INTERVAL, 3 * (time.time() - started))
 
@@ -204,6 +219,16 @@ class Pipeline:
                             break  # una persona pertenece a una sola mesa
 
                 engine.update(frame.t, counts, tracks, items_per_table)
+
+                if db_run is not None and frame.t >= next_sample_t:  # foto periódica de cada mesa
+                    next_sample_t = frame.t + config.SAMPLE_SECONDS
+                    ts = clock_start + timedelta(seconds=frame.t)
+                    try:
+                        self.storage.add_samples(db_run, [
+                            (tid, frame.t, ts, tb.status, counts.get(tid, 0), engine.items[tid].count or 0)
+                            for tid, tb in engine.tables.items()])
+                    except Exception:  # noqa: BLE001
+                        pass
 
                 view = annotate(frame.image, people, items, [
                     {"id": tid, "polygon": polygons[tid], "status": tb.status, "people_count": counts.get(tid, 0)}
@@ -268,6 +293,7 @@ class Pipeline:
                 "type": e["type"], "table_id": e["table_id"], "people_count": e["people_count"],
                 "time": self._clock(e["t"]), "duration": e.get("duration"), "after": e.get("after"),
                 "alert": e.get("alert"), "message": e.get("message"),
+                "prev": e.get("prev"), "items": e.get("items"), "prev_items": e.get("prev_items"), "names": e.get("names"),
             })
         return {
             "status": self.status, "error": self.error, "run_id": self.run_id, "source": self.source,
@@ -290,14 +316,20 @@ class Pipeline:
     def export_events_csv(self) -> str:
         labels = {"TABLE_OCCUPIED": "Mesa ocupada", "TABLE_FREED": "Mesa libre",
                   "TABLE_STAFF_VISIT": "Visita de personal (estimada)", "TABLE_SERVED": "Comida/bebida servida (estimado)",
-                  "ALERT": "Aviso"}
+                  "ALERT": "Aviso", "PARTY_SIZE_CHANGED": "Cambia el tamaño del grupo (aprox.)",
+                  "ITEMS_CHANGED": "Cambian los objetos sobre la mesa", "TABLE_CLEARED": "Mesa recogida (estimado)",
+                  "TABLE_CLEANED": "Mesa limpiada/preparada (estimado)"}
         out = io.StringIO()
         w = csv.writer(out, delimiter=";")
         w.writerow(["hora", "mesa", "evento", "personas", "duracion_s", "detalle"])
         for e in self.engine.log.events:
             detail = e.get("message") or ""
-            if e["type"] == "TABLE_SERVED":
+            if e["type"] in ("TABLE_SERVED", "TABLE_CLEARED"):
                 detail = f'{e["after"]:.0f} s tras sentarse'
+            elif e["type"] == "PARTY_SIZE_CHANGED":
+                detail = f'{e.get("prev")} -> {e["people_count"]} personas'
+            elif e["type"] == "ITEMS_CHANGED":
+                detail = f'{e.get("prev_items")} -> {e.get("items")} objetos: {e.get("names")}'
             dur = e.get("duration")
             w.writerow([self._clock(e["t"]), e["table_id"], labels.get(e["type"], e["type"]), e["people_count"],
                         "" if dur is None else f"{dur:.0f}", detail])

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import Dashboard from "./components/Dashboard.jsx";
+import History from "./components/History.jsx";
 import Setup from "./components/Setup.jsx";
 
 export default function App() {
@@ -38,13 +39,18 @@ export default function App() {
           <button className={tab === "dashboard" ? "active" : ""} onClick={() => setTab("dashboard")}>
             Dashboard
           </button>
+          <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
+            Historial
+          </button>
           <button className={tab === "setup" ? "active" : ""} onClick={() => setTab("setup")}>
             Configuración
           </button>
         </nav>
       </header>
       {offline && <div className="banner error">No se puede conectar con el backend (¿está iniciado en el puerto 8000?)</div>}
-      {tab === "dashboard" ? <Dashboard state={state} goSetup={() => setTab("setup")} /> : <Setup />}
+      {tab === "dashboard" && <Dashboard state={state} goSetup={() => setTab("setup")} />}
+      {tab === "history" && <History />}
+      {tab === "setup" && <Setup />}
     </div>
   );
 }

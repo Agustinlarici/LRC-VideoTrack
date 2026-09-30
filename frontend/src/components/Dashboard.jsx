@@ -40,6 +40,14 @@ function EventLine({ e }) {
       return <>{who} visita de personal <span className="tag">estimado</span><span className="muted"> · {formatDuration(e.duration)}</span></>;
     case "TABLE_SERVED":
       return <>{who} comida/bebida servida <span className="tag">estimado</span><span className="muted"> · {formatDuration(e.after)} tras sentarse</span></>;
+    case "PARTY_SIZE_CHANGED":
+      return <>{who} el grupo pasa de {e.prev} a {plural(e.people_count)} <span className="tag">aprox.</span></>;
+    case "ITEMS_CHANGED":
+      return <>{who} objetos sobre la mesa: {e.prev_items} → {e.items}</>;
+    case "TABLE_CLEARED":
+      return <>{who} mesa recogida <span className="tag">estimado</span></>;
+    case "TABLE_CLEANED":
+      return <>{who} limpiada/preparada <span className="tag">estimado</span></>;
     case "ALERT":
       return <span className="alert-line">⚠ {alertLabel(e.alert)}: {e.message}</span>;
     default:
@@ -193,8 +201,9 @@ export default function Dashboard({ state, goSetup }) {
           </span>
         </div>
         {state.events.length === 0 && <p className="muted">Sin eventos todavía.</p>}
+        <p className="muted small">Los cambios de objetos sobre la mesa se guardan en el Historial (detalle de cada visita).</p>
         <ul className="events">
-          {state.events.map((e, i) => (
+          {state.events.filter((e) => e.type !== "ITEMS_CHANGED").map((e, i) => (
             <li key={i} className={e.type === "ALERT" ? "is-alert" : ""}>
               <span className="mono">{e.time}</span> — <EventLine e={e} />
             </li>

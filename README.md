@@ -25,6 +25,8 @@ restaurant-vision/
 │   │   ├── table_state.py   #   estados, debounce, eventos, estadísticas
 │   │   ├── service_monitor.py #  visitas de personal y comida servida (heurísticas)
 │   │   ├── alerts.py        #   reglas de avisos
+│   │   ├── storage.py       #   base de datos SQLite (eventos y fotos periódicas)
+│   │   ├── journal.py       #   reconstruye visitas y calcula estadísticas
 │   │   ├── settings.py      #   umbrales editables (JSON)
 │   │   └── pipeline.py      #   hilo que une todo
 │   ├── api/routes.py        # endpoints REST + stream MJPEG
@@ -116,6 +118,28 @@ Botones de preset: **Restaurante real** y **Demo (vídeo corto)**, que baja todo
 
 Limitaciones a tener en cuenta: no distingue camarero de cliente (una persona que atraviesa la zona de una mesa ≥3 s puede contar como visita); desde una cámara elevada los objetos pequeños se pierden y pueden dar falsos servicios o no detectarlos; con mesas adyacentes, los comensales en el borde pueden contarse en la mesa vecina. Para precisión comercial haría falta afinar/entrenar un modelo con imágenes de la sala.
 
+## Registro completo e historial
+Todo lo que pasa en cada mesa se guarda en una base de datos local (`backend/data/restaurant.db`, SQLite: un solo archivo, sin instalar nada) y **sobrevive a reiniciar el backend**. La pestaña **Historial** reconstruye cada *visita* (un grupo sentado en una mesa) a partir de esos eventos.
+
+**Qué se registra** (cada evento con fecha, hora, mesa y personas; además una foto de cada mesa cada 5 s con estado, personas y objetos):
+
+| Evento | Significado |
+|---|---|
+| `TABLE_OCCUPIED` / `TABLE_FREED` | Se sienta un grupo / se va (con duración) |
+| `PARTY_SIZE_CHANGED` | El grupo cambia de tamaño (llegan más comensales o se levantan), **aprox.** Cuenta sólo personas “residentes”: el personal de visita no infla el grupo |
+| `TABLE_STAFF_VISIT` | Visita de personal, **estimada** |
+| `TABLE_SERVED` | Comida/bebida servida, **estimado** |
+| `ITEMS_CHANGED` | Cambian los objetos detectados sobre la mesa (con nombres: copa, plato…) |
+| `TABLE_CLEARED` | Se llevan platos y vasos (mesa recogida), **estimado** |
+| `TABLE_CLEANED` | Personal en la mesa ya vacía (limpieza/preparación), **estimado** |
+| `ALERT` | Aviso (sin atender, sin servicio, ocupación larga, libre sin ocupar) |
+
+Un camarero limpiando una mesa recién liberada no se cuenta como comensal: durante 10 min tras salir el grupo la ocupación exige el triple de presencia (`RV_CLEAN_WINDOW`, `RV_CLEAN_FACTOR`).
+
+**Qué calcula el Historial** (por día y por ejecución): grupos y comensales (aprox.), estancia media y mediana, ocupación media, **rotación** (tiempo que la mesa queda libre entre grupos), tiempo hasta la primera atención y % de grupos sin visita, tiempo hasta el servicio, cambios de grupo, avisos, mesas ocupadas por hora del día, estadísticas por mesa y, al pulsar una visita, su **línea de tiempo completa** con un gráfico de personas y objetos. Exporta *Visitas (CSV)* y *Todos los eventos (CSV)*, y permite borrar una ejecución o todo el historial.
+
+Lo que **no** se puede saber con una cámara: qué pidieron, qué comieron, cuánto pagaron, quién es cada persona. Eso exigiría integrar el TPV/caja, que queda fuera de este MVP. Ejecutar varias veces el mismo vídeo duplica datos en el historial: borra la ejecución desde la pestaña.
+
 ## Calidad de detección
 Qué hace el sistema para no perder gente ni objetos (y cómo comprobarlo en tu sala):
 
@@ -186,6 +210,7 @@ En CMD: `set RV_YOLO_MODEL=yolov8s.pt`. En PowerShell: `$env:RV_YOLO_MODEL="yolo
 ```bat
 python tests\test_table_state.py
 python tests\test_service_monitor.py
+python tests\test_journal.py
 python tests\test_pipeline_fake.py
 ```
 `test_pipeline_fake.py` ejecuta el pipeline completo (ocupación, visita, servicio, avisos, webhook) con detectores simulados, sin YOLO.

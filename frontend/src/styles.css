@@ -81,3 +81,17 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 .export a { color: var(--blue); text-decoration: none; }
 .export a:hover { text-decoration: underline; }
 .pill.warn { background: #fff1e0; color: #b35f00; }
+.stats-4 { grid-template-columns: repeat(4, 1fr); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tbl th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.tbl td { padding: 7px 8px; border-bottom: 1px solid var(--line); }
+.tbl.clickable tbody tr { cursor: pointer; }
+.tbl.clickable tbody tr:hover, .tbl tr.sel { background: #f0f4ff; }
+.chart .bar { fill: var(--blue); opacity: 0.75; }
+.chart .line2 { stroke: #e8850c; }
+.chart .lg1 { fill: var(--blue); } .chart .lg2 { fill: #e8850c; }
+.detail { border-color: var(--blue); }
+select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.controls .export { display: flex; gap: 12px; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } .stats-4 { grid-template-columns: repeat(2, 1fr); } }

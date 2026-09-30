@@ -8,6 +8,7 @@ backend/data/videos/
 backend/data/zones.json
 backend/data/source.json
 backend/data/settings.json
+backend/data/restaurant.db*
 # modelos y vídeos
 *.pt
 *.mp4

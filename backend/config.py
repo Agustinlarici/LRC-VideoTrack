@@ -8,6 +8,7 @@ VIDEOS_DIR = DATA_DIR / "videos"
 ZONES_FILE = DATA_DIR / "zones.json"
 SOURCE_FILE = DATA_DIR / "source.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
+DB_FILE = DATA_DIR / "restaurant.db"
 
 DATA_DIR.mkdir(exist_ok=True)
 VIDEOS_DIR.mkdir(exist_ok=True)
@@ -37,6 +38,9 @@ PROCESS_FPS = float(os.getenv("RV_PROCESS_FPS", "10"))  # frames/s que pasan por
 OCCUPY_SECONDS = float(os.getenv("RV_OCCUPY_SECONDS", "2"))  # LIBERA -> OCCUPATA
 FREE_SECONDS = float(os.getenv("RV_FREE_SECONDS", "3"))     # OCCUPATA -> LIBERA
 
+# --- Registro ---
+SAMPLE_SECONDS = float(os.getenv("RV_SAMPLE_SECONDS", "5"))  # foto de cada mesa (estado, personas, objetos) cada N s de vídeo
+
 # --- Stream hacia el dashboard ---
 STREAM_MAX_WIDTH = int(os.getenv("RV_STREAM_MAX_WIDTH", "960"))
 STREAM_JPEG_QUALITY = int(os.getenv("RV_STREAM_JPEG_QUALITY", "70"))
@@ -56,6 +60,10 @@ ITEM_MARGIN = 0.15  # margen del recorte de cada mesa
 VISIT_MIN_SECONDS = float(os.getenv("RV_VISIT_MIN", "3"))
 VISIT_MAX_SECONDS = float(os.getenv("RV_VISIT_MAX", "60"))
 VISIT_LEAVE_GRACE = 1.0  # segundos sin verla en la mesa para darla por salida
+# Tras irse los clientes, el personal limpia/prepara la mesa: durante CLEAN_WINDOW segundos la ocupación
+# exige CLEAN_FACTOR veces más presencia, para que un camarero limpiando no cuente como comensal.
+CLEAN_WINDOW_SECONDS = float(os.getenv("RV_CLEAN_WINDOW", "600"))
+CLEAN_FACTOR = float(os.getenv("RV_CLEAN_FACTOR", "3"))
 SERVICE_CONFIRM_SECONDS = float(os.getenv("RV_SERVICE_CONFIRM", "3"))  # objetos nuevos sostenidos
 
 # --- Avisos: valores por defecto de un restaurante real (segundos; 0 = desactivado) ---
