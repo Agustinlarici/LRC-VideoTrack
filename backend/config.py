@@ -13,12 +13,25 @@ DATA_DIR.mkdir(exist_ok=True)
 VIDEOS_DIR.mkdir(exist_ok=True)
 
 # --- Visión ---
-YOLO_MODEL = os.getenv("RV_YOLO_MODEL", "yolov8n.pt")  # se descarga solo la primera vez
+# Perfil: fast = yolov8n (PC modesto) | balanced = yolov8s (por defecto) | accurate = yolov8s a mayor resolución
+PROFILE = os.getenv("RV_PROFILE", "balanced").lower()
+_PROFILES = {  # (modelo, imgsz base personas, imgsz máximo)
+    "fast": ("yolov8n.pt", 640, 640),
+    "balanced": ("yolov8s.pt", 640, 960),
+    "accurate": ("yolov8s.pt", 960, 1280),
+}
+_model, _imgsz, _max_imgsz = _PROFILES.get(PROFILE, _PROFILES["balanced"])
+YOLO_MODEL = os.getenv("RV_YOLO_MODEL", _model)  # se descarga solo la primera vez
 YOLO_CONF = float(os.getenv("RV_YOLO_CONF", "0.35"))
-YOLO_IMGSZ = int(os.getenv("RV_YOLO_IMGSZ", "640"))
-TRACKER = os.getenv("RV_TRACKER", "bytetrack.yaml")  # tracker incluido en ultralytics
-PROCESS_FPS = float(os.getenv("RV_PROCESS_FPS", "10"))  # frames/s que pasan por YOLO (el resto se salta)
+TRACK_MIN_CONF = float(os.getenv("RV_TRACK_MIN_CONF", "0.1"))  # ByteTrack usa las de baja confianza para no perder IDs
+YOLO_IOU = float(os.getenv("RV_YOLO_IOU", "0.6"))
+YOLO_IMGSZ = int(os.getenv("RV_YOLO_IMGSZ", str(_imgsz)))
+MAX_IMGSZ = int(os.getenv("RV_MAX_IMGSZ", str(_max_imgsz)))  # tope al ampliar la resolución en cámaras HD/4K
+TRACKER = os.getenv("RV_TRACKER", str(BASE_DIR / "vision" / "bytetrack_restaurant.yaml"))
+USE_ROI = os.getenv("RV_USE_ROI", "1") != "0"        # detectar sólo dentro de las mesas (+ margen)
+ROI_MARGIN = float(os.getenv("RV_ROI_MARGIN", "0.25"))  # margen alrededor de las mesas, para ver llegar a la gente
 PERSON_CLASS_ID = 0  # COCO: 0 = person
+PROCESS_FPS = float(os.getenv("RV_PROCESS_FPS", "10"))  # frames/s que pasan por YOLO (el resto se salta)
 
 # --- Lógica de mesas (segundos de VÍDEO, no de reloj real) ---
 OCCUPY_SECONDS = float(os.getenv("RV_OCCUPY_SECONDS", "2"))  # LIBERA -> OCCUPATA
@@ -33,8 +46,9 @@ STREAM_JPEG_QUALITY = int(os.getenv("RV_STREAM_JPEG_QUALITY", "70"))
 ITEM_CLASS_IDS = [39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55]
 ITEM_MODEL = os.getenv("RV_ITEM_MODEL", YOLO_MODEL)
 ITEM_CONF = float(os.getenv("RV_ITEM_CONF", "0.25"))
-ITEM_IMGSZ = int(os.getenv("RV_ITEM_IMGSZ", "1280"))
-ITEM_INTERVAL = float(os.getenv("RV_ITEM_INTERVAL", "0.5"))  # segundos de vídeo entre detecciones de objetos
+ITEM_IMGSZ = int(os.getenv("RV_ITEM_IMGSZ", "640"))  # se aplica a cada recorte de mesa
+ITEM_INTERVAL = float(os.getenv("RV_ITEM_INTERVAL", "1.0"))  # mínimo de segundos entre detecciones de objetos (se espacia solo si el PC va justo)
+ITEM_MARGIN = 0.15  # margen del recorte de cada mesa
 
 # --- Visitas de personal (estimadas por comportamiento) ---
 # Visita = una persona que ENTRA andando desde fuera de la mesa, se queda entre VISIT_MIN y VISIT_MAX

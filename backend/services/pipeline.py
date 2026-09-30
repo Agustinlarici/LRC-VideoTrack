@@ -18,7 +18,7 @@ from ..vision.detector import ItemDetector, PersonTracker
 from ..vision.video_source import NO_FRAME, VideoSource
 from .settings import Settings
 from .table_state import TableEngine
-from .zones import ZoneStore, point_in_polygon, to_pixels
+from .zones import ZoneStore, bounding_rect, expand_rect, point_in_polygon, to_pixels, union_rect
 
 
 def parse_clock(text: str | None) -> datetime:
@@ -138,7 +138,8 @@ class Pipeline:
             wall_start = time.time()
             zone_version, polygons = -1, {}
             origins: dict[int, tuple[float, float]] = {}  # dónde se vio por primera vez cada persona
-            last_item_t, items = -1e9, []
+            last_item_t, items, item_gap = -1e9, [], config.ITEM_INTERVAL
+            person_roi, table_rects = None, {}
 
             while not stop.is_set():
                 frame = source.read()
@@ -161,20 +162,34 @@ class Pipeline:
                     zone_version = self.zones.version
                     polygons = {z["id"]: to_pixels(z, source.width, source.height) for z in self.zones.get()}
                     engine.sync_tables(list(polygons))
+                    table_rects = {tid: expand_rect(bounding_rect(poly), config.ITEM_MARGIN, source.width, source.height)
+                                   for tid, poly in polygons.items()}
+                    new_roi = None
+                    if config.USE_ROI and polygons:
+                        new_roi = expand_rect(union_rect([bounding_rect(p) for p in polygons.values()]),
+                                              config.ROI_MARGIN, source.width, source.height)
+                    if new_roi != person_roi:
+                        person_roi = new_roi
+                        self._tracker.reset()  # las coordenadas del recorte cambian: los IDs viejos ya no valen
 
-                people = self._tracker.track(frame.image)
+                people = self._tracker.track(frame.image, person_roi)
 
                 # Objetos (comida/bebida) a baja frecuencia
                 items_per_table = None
-                if frame.t - last_item_t >= config.ITEM_INTERVAL:
+                if polygons and frame.t - last_item_t >= item_gap:
                     last_item_t = frame.t
-                    items = self._items.detect(frame.image)
-                    items_per_table = {tid: 0 for tid in polygons}
-                    for it in items:
-                        for tid, poly in polygons.items():
-                            if point_in_polygon(it.center, poly):
+                    started = time.time()
+                    found = self._items.detect(frame.image, table_rects)
+                    # cada mesa sólo se queda con los objetos cuyo centro cae DENTRO de su polígono
+                    # (así un objeto en el solape de dos recortes no se cuenta dos veces)
+                    items, items_per_table = [], {tid: 0 for tid in polygons}
+                    for tid, its in found.items():
+                        for it in its:
+                            if tid in polygons and point_in_polygon(it.center, polygons[tid]):
+                                items.append(it)
                                 items_per_table[tid] += 1
-                                break
+                    # si el PC va justo, espacia las detecciones para no gastar más de ~25% de CPU en objetos
+                    item_gap = max(config.ITEM_INTERVAL, 3 * (time.time() - started))
 
                 counts = {tid: 0 for tid in polygons}
                 tracks = {tid: [] for tid in polygons}

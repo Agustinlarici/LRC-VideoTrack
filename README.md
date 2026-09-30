@@ -52,7 +52,7 @@ cd ..
 
 **Atajo con doble clic:** `install.bat` hace todo lo anterior (venv, pip, npm) y `start.bat` arranca backend y frontend y abre el navegador.
 
-La primera vez que se procesa un vídeo, Ultralytics descarga solo el modelo `yolov8n.pt` (~6 MB), así que hace falta internet ese día.
+La primera vez que se procesa un vídeo, Ultralytics descarga solo el modelo `yolov8s.pt` (~22 MB), así que hace falta internet ese día.
 
 ## Ejecución
 
@@ -91,7 +91,7 @@ Descarga un vídeo de restaurante de Mixkit (licencia gratuita, ~5 MB, 15 s, cá
 - Un punto amarillo marca el centro de la caja: si está dentro del polígono, esa persona cuenta para la mesa.
 - Cada mesa muestra `T01 OCCUPATA (2)`: estado y personas dentro. El polígono se pinta rojo (ocupada) o verde (libre).
 - Prueba del debounce: una persona que cruza por delante de una mesa unos segundos **no** debe generar evento.
-- Si faltan personas o los IDs cambian constantemente, prueba un modelo mayor: `set RV_YOLO_MODEL=yolov8s.pt` antes de arrancar el backend.
+- Si faltan personas o los IDs cambian constantemente, mira la sección *Calidad de detección* (perfil `accurate` y `scripts\debug_detection.py`).
 
 ## Avisos y servicio a la mesa (estimados)
 Además de libre/ocupada, el sistema estima el servicio y genera avisos. **Son heurísticas sobre YOLO genérico, no reconocimiento de camareros ni de platos**; en el dashboard llevan la etiqueta *estimado*.
@@ -116,10 +116,27 @@ Botones de preset: **Restaurante real** y **Demo (vídeo corto)**, que baja todo
 
 Limitaciones a tener en cuenta: no distingue camarero de cliente (una persona que atraviesa la zona de una mesa ≥3 s puede contar como visita); desde una cámara elevada los objetos pequeños se pierden y pueden dar falsos servicios o no detectarlos; con mesas adyacentes, los comensales en el borde pueden contarse en la mesa vecina. Para precisión comercial haría falta afinar/entrenar un modelo con imágenes de la sala.
 
+## Calidad de detección
+Qué hace el sistema para no perder gente ni objetos (y cómo comprobarlo en tu sala):
+
+- **Modelo `yolov8s` por defecto** (perfil `balanced`). En el vídeo de prueba detecta más personas y con más confianza que `yolov8n`. Perfiles con `RV_PROFILE`: `fast` (yolov8n, PC modesto), `balanced`, `accurate` (mayor resolución, 1280 px; recomendable con GPU).
+- **ByteTrack ajustado** (`backend/vision/bytetrack_restaurant.yaml`): usa las detecciones de baja confianza para no perder el ID de alguien tapado por la mesa u otro comensal, mantiene los IDs ~6 s y no crea IDs nuevos con detecciones dudosas.
+- **Sólo se analiza la zona de las mesas** (+25% de margen): con cámaras HD/4K las personas lejanas dejan de perderse al reducir el frame completo, porque la resolución se adapta al tamaño de esa región (tope `RV_MAX_IMGSZ`). Desactivable con `RV_USE_ROI=0`.
+- **Objetos por recorte de mesa**: se analiza un recorte de cada mesa, no el frame entero; así los platos y copas se ven mucho más grandes y se detectan mejor. Si el PC va justo, las detecciones de objetos se espacian solas.
+- **Debounce con ventana deslizante**, para que los parpadeos de YOLO no cambien el estado de una mesa.
+
+**Calibrar con tu vídeo o cámara:**
+```bat
+python scripts\debug_detection.py C:\videos\restaurant.mp4
+```
+Compara los tres perfiles sobre 4 frames de tu vídeo, imprime personas por frame y ms por frame, y guarda `detection_debug.jpg` para revisarlo a ojo. Elige el perfil más barato que encuentre a todos y arranca con, p. ej., `set RV_PROFILE=accurate`.
+
+**Lo que ningún ajuste garantiza:** que se detecte “todo”. Personas muy tapadas, mala luz, cámaras muy cenitales o muy lejanas y objetos pequeños seguirán fallando a veces. La forma de subir de verdad la precisión es entrenar/afinar el modelo con imágenes de la sala del cliente.
+
 ## Informe y rendimiento
 - **Ocupación en el tiempo:** gráfico de mesas ocupadas a lo largo de la sesión.
 - **Exportar:** *Descargar eventos (CSV)* y *Descargar ocupaciones (CSV)* (una fila por ocupación: hora, duración, visitas, tiempo hasta servicio). Se abren directamente en Excel en español (separador `;`). Son datos de la sesión actual; se pierden al reiniciar el backend, así que descárgalos antes de cerrar.
-- **fps:** el dashboard muestra los frames por segundo que analiza el PC. Si aparece “PC lento”, baja `RV_PROCESS_FPS` (p. ej. 6), usa `RV_ITEM_IMGSZ=960` o una GPU NVIDIA. La primera vez que se pulsa *Iniciar* tarda 20–30 s en cargar PyTorch y el modelo.
+- **fps:** el dashboard muestra los frames por segundo que analiza el PC. Si aparece “PC lento”, baja `RV_PROCESS_FPS` (p. ej. 6), usa `RV_PROFILE=fast` o una GPU NVIDIA. La primera vez que se pulsa *Iniciar* tarda 20–30 s en cargar PyTorch y el modelo.
 
 ## Conectar una cámara
 En *Configuración* → campo de fuente, y pulsa **Probar conexión** antes de **Usar esta fuente**:
@@ -150,9 +167,11 @@ Todo entra por `backend/vision/video_source.py`. En *Configuración* puedes pega
 ## Variables de entorno útiles
 | Variable | Por defecto | Qué hace |
 |---|---|---|
-| `RV_YOLO_MODEL` | `yolov8n.pt` | Modelo YOLO (`yolov8s.pt` = más preciso, más lento) |
+| `RV_PROFILE` | `balanced` | `fast` / `balanced` / `accurate` (modelo y resolución) |
+| `RV_YOLO_MODEL` | según perfil | Modelo YOLO concreto (sobrescribe el perfil) |
 | `RV_YOLO_CONF` | `0.35` | Umbral de confianza |
-| `RV_ITEM_MODEL` / `RV_ITEM_IMGSZ` | mismo modelo / `1280` | Modelo y resolución para detectar objetos sobre la mesa |
+| `RV_ITEM_MODEL` / `RV_ITEM_IMGSZ` | mismo modelo / `640` | Modelo y resolución (por recorte de mesa) para detectar objetos |
+| `RV_USE_ROI` / `RV_ROI_MARGIN` | `1` / `0.25` | Analizar sólo la región de las mesas y su margen |
 | `RV_VISIT_MIN` / `RV_VISIT_MAX` | `3` / `60` | Permanencia (s) que cuenta como visita de personal |
 | `RV_DATA_DIR` | `backend/data` | Dónde se guardan mesas, ajustes y vídeos |
 | `RV_PROCESS_FPS` | `10` | Frames por segundo que pasan por YOLO; el resto se salta (el reloj sigue siendo exacto). Bájalo si tu PC va lento |

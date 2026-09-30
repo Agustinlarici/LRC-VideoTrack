@@ -46,3 +46,23 @@ def to_pixels(zone: dict, width: int, height: int) -> np.ndarray:
 
 def point_in_polygon(point: tuple[float, float], polygon: np.ndarray) -> bool:
     return cv2.pointPolygonTest(polygon.reshape(-1, 1, 2).astype(np.float32), point, False) >= 0
+
+
+Rect = tuple[int, int, int, int]  # x1, y1, x2, y2 en píxeles
+
+
+def bounding_rect(polygon: np.ndarray) -> Rect:
+    x1, y1 = polygon.min(axis=0)
+    x2, y2 = polygon.max(axis=0)
+    return int(x1), int(y1), int(x2), int(y2)
+
+
+def expand_rect(rect: Rect, margin: float, width: int, height: int) -> Rect:
+    """Amplía el rectángulo un `margin` (fracción de su tamaño) sin salirse de la imagen."""
+    x1, y1, x2, y2 = rect
+    mx, my = (x2 - x1) * margin, (y2 - y1) * margin
+    return (int(max(0, x1 - mx)), int(max(0, y1 - my)), int(min(width, x2 + mx)), int(min(height, y2 + my)))
+
+
+def union_rect(rects: list[Rect]) -> Rect:
+    return (min(r[0] for r in rects), min(r[1] for r in rects), max(r[2] for r in rects), max(r[3] for r in rects))

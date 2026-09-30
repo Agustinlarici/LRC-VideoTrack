@@ -1,0 +1,8 @@
+# ByteTrack ajustado para restaurante (ver README). Se procesan ~10 fps, así que 60 frames ~ 6 s.
+tracker_type: bytetrack
+track_high_thresh: 0.35   # 1ª asociación: detecciones fiables
+track_low_thresh: 0.1     # 2ª asociación: recupera personas parcialmente tapadas (mesa, otros comensales)
+new_track_thresh: 0.4     # sólo crea un ID nuevo con detecciones fiables (menos IDs fantasma)
+track_buffer: 60          # mantiene el ID de alguien tapado hasta ~6 s
+match_thresh: 0.8
+fuse_score: True

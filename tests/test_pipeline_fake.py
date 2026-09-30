@@ -41,7 +41,7 @@ class FakeTracker:
     def reset(self):
         self.n = 0
 
-    def track(self, image):
+    def track(self, image, roi=None):
         t = CLOCK.t = self.n / FPS
         self.n += 1
         people = []
@@ -61,10 +61,11 @@ class FakeTracker:
 
 
 class FakeItems:
-    def detect(self, image):
+    def detect(self, image, rects=None):
         t = CLOCK.t
         n = 1 if t < 35 else 3               # una copa en la mesa; a los 35 s llegan plato y bebida
-        return [Item("cup", 0.5 * W + i * 6, 0.6 * H, 0.5 * W + i * 6 + 5, 0.6 * H + 5, 0.6) for i in range(n)]
+        items = [Item("cup", 0.5 * W + i * 6, 0.6 * H, 0.5 * W + i * 6 + 5, 0.6 * H + 5, 0.6) for i in range(n)]
+        return {tid: items for tid in (rects or {"": None})}
 
 
 def make_video(path):
