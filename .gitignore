@@ -14,3 +14,4 @@ backend/data/restaurant.db*
 *.mp4
 *.avi
 *.mkv
+demo_output/
